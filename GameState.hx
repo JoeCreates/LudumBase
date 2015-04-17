@@ -4,9 +4,11 @@ import flixel.FlxG;
 import flixel.FlxSprite;
 import flixel.FlxState;
 import flixel.group.FlxGroup;
+import flixel.group.FlxSpriteGroup;
 import flixel.tweens.FlxEase;
 import flixel.tweens.FlxTween;
 import flixel.util.FlxColor;
+import openfl.filters.BlurFilter;
 import world.World;
 
 /**
@@ -17,7 +19,7 @@ import world.World;
 class GameState extends FlxState {
 	
 	public var world:World;
-	public var uiGroup:FlxGroup;
+	public var uiGroup:FlxSpriteGroup;
 	
 	public var uiCamera:FlxCamera;
 	public var worldCamera:FlxCamera;
@@ -27,12 +29,13 @@ class GameState extends FlxState {
 	
 	public var zoomTween:FlxTween;
 	
-	public function new() {
-		super();
+	override public function create():Void {
+		super.create();
 		
 		// Cameras
 		worldCamera = FlxG.camera;
-		uiCamera = new FlxCamera();
+		uiCamera = new FlxCamera(Std.int(FlxG.camera.x), Std.int(FlxG.camera.y), 
+		                         FlxG.camera.width, FlxG.camera.height, FlxG.camera.zoom);
 		uiCamera.bgColor = FlxColor.TRANSPARENT;
 		FlxG.cameras.add(uiCamera);
 		FlxCamera.defaultCameras = [worldCamera];
@@ -41,8 +44,14 @@ class GameState extends FlxState {
 		worldZoom = 1;
 		
 		// Groups
-		uiGroup = new FlxGroup();
+		uiGroup = new FlxSpriteGroup();
 		uiGroup.cameras = [uiCamera];
+		
+		add(uiGroup);
+		
+		var blur:BlurFilter = new BlurFilter();
+		worldCamera.flashSprite.filters.push(blur);
+		worldCamera.flashSprite.filters = worldCamera.flashSprite.filters;
 	}
 	
 	public function zoomTo(zoom:Float, duration:Float = 1, ?ease:Float->Float):FlxTween {

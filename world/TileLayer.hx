@@ -7,17 +7,22 @@ import flixel.group.FlxGroup;
 import flixel.math.FlxAngle;
 import flixel.tile.FlxTilemapBuffer;
 import nape.phys.Body;
+import world.WorldLayer.WorldLayerType;
 
 /** Allows you to treat a FlxNapeTilemap like a sprite. Kind of. */
 //TODO make it so does it efficiently if spriteyness is not necessary
-class TileLayer extends FlxSprite {
+class TileLayer extends FlxSprite implements WorldLayer {
+	
+	public var layerType:WorldLayerType = WorldLayerType.TILE;
 	
 	public var tilemap:NapeSpriteTilemap;
+	public var world:World;
 	
-	public function new() {
+	public function new(world:World) {
 		super();
 		
 		tilemap = new NapeSpriteTilemap(this);
+		this.world = world;
 	}
 	
 	override public function update(dt:Float):Void {

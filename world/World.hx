@@ -4,6 +4,7 @@ import config.Config;
 import flixel.addons.editors.tiled.TiledLayer;
 import flixel.addons.editors.tiled.TiledTileLayer;
 import flixel.addons.nape.FlxNapeSpace;
+import flixel.addons.nape.FlxNapeSprite;
 import flixel.addons.nape.FlxNapeTilemap;
 import flixel.FlxBasic;
 import flixel.graphics.atlas.FlxAtlas;
@@ -41,9 +42,10 @@ import flixel.addons.editors.tiled.TiledObjectLayer;
 import flixel.addons.editors.tiled.TiledTileSet;
 import openfl.display.BitmapData;
 import states.PlayState;
+import world.WorldLayer.WorldLayerType;
 
 /**
- * A 2D world using Tiled maps and Nape Physics.
+ * A 2D world using Tiled maps, Nape Physics, and hxDynaLight lighting
  * 
  * Consists of TileLayers and FlxGroups of game objects.
  */
@@ -59,20 +61,26 @@ class World extends FlxGroup {
 	/** TiledMap data */
 	public var tiledMap:TiledMap;
 	
-	public var worldLoader:WorldLoader;
-	public var namedObjects:Map<String, FlxObject>;
+	public var namedObjects:Map<String, FlxBasic>;
+	public var namedLayers:Map<String, WorldLayer>;
+	
+	public var x(default, set):Float;
+	public var y(default, set):Float;
+	
+	//TODO multiple light layers
+	//public var lighting:LightLayer;
 	
 	public var scale:FlxPoint;
 	
-	public function new(tiledLevel:Dynamic, worldLoader:WorldLoader, ?scale:FlxPoint) {
+	public function new(?scale:FlxPoint) {
 		super();
-		
 		this.scale = (scale == null) ? new FlxPoint(1, 1) : scale;
 		
-		this.worldLoader = worldLoader;
-		
-		namedObjects = new Map<String, FlxObject>();
-		
+		namedObjects = new Map<String, FlxBasic>();
+		namedLayers = new Map<String, WorldLayer>();
+	}
+	
+	public function load(tiledLevel:Dynamic, worldLoader:WorldLoader):Void {
 		tiledMap = new TiledMap(tiledLevel);
 		
 		// Camera scroll bounds
@@ -96,35 +104,89 @@ class World extends FlxGroup {
 		for (tiledLayer in tiledMap.layers) {
 			switch (tiledLayer.type) {
 				case TiledLayerType.OBJECT:
-					var group:FlxGroup = worldLoader.load(this, cast tiledLayer);
-					for (m in group) {
-						if (Std.is(m, FlxObject)) {
-							var o:FlxObject = cast m;
-							o.x *= scale.x;
-							o.y *= scale.y;
+					
+					// Collision Layer
+					if (tiledLayer.properties.contains("collision")) {
+						var cl:CollisionLayer = loadCollisionLayer(cast tiledLayer);
+						cl.body.cbTypes.add(groundCollisionType);
+						if (tiledLayer.properties.get("collision") == "oneway") {
+							cl.body.cbTypes.add(onewayCollisionType);
 						}
+						namedLayers.set(tiledLayer.name, cl);
+						add(cl);
 					}
-					add(group);
+					
+					// Object Layer
+					else {
+						var group:ObjectLayer = new ObjectLayer(this);
+						worldLoader.load(group, cast tiledLayer);
+						namedLayers.set(tiledLayer.name, group);
+						for (m in group) {
+							//TODO lots of badness can occur here because it is too specific
+							if (Std.is(m, FlxNapeSprite)) {
+								var s:FlxNapeSprite = cast m;
+								s.setPosition(s.x * scale.x, s.y * scale.y);
+							}
+							else if (Std.is(m, FlxObject)) {
+								var o:FlxObject = cast m;
+								o.x *= scale.x;
+								o.y *= scale.y;
+							}
+						}
+						add(group);
+					}
 				case TiledLayerType.TILE:
 					var tileLayer:TileLayer = loadTileLayer(cast tiledLayer, combinedTileset);
-					// TODO: flixel doesn't really allow for these to happen at the same time right now
+					namedLayers.set(tiledLayer.name, tileLayer);
 					add(tileLayer);
-					//add(tileLayer.tilemap);
 			}
-			
-			//TODO rotation
-			//tilemap.body.rotate(tilemap.body.position, FlxAngle.asRadians(10));
-			//tilemap.angle = 10;
-			//tilemap.sprite.origin.set();
-			//tilemap.sprite.angle = 10;
-			//
 		}
 		
 		initCollisions();
 	}
 	
+	public function loadCollisionLayer(tiledLayer:TiledObjectLayer):CollisionLayer {
+		var cl:CollisionLayer = new CollisionLayer(this);
+		for (to in tiledLayer.objects) {
+			var points:Array<Vec2> = [];
+			if (to.objectType == TiledObject.RECTANGLE) {
+				points = [Vec2.get(0, 0), Vec2.get(to.width, 0),
+						  Vec2.get(to.width, to.height), Vec2.get(0, to.height)];
+			} else {
+				for (p in to.points) {
+					points.push(Vec2.get(p.x, p.y));
+				}
+			}
+			var tilePosition:Vec2 = Vec2.get(to.x, to.y);
+			for (p in points) {
+				p.addeq(tilePosition);
+			}
+			cl.placePolygon(points);
+		}
+		
+		//TODO repetition
+		var tiledMap:TiledMap = tiledLayer.map;
+		var mapWidth:Int = Std.int(tiledMap.fullWidth * scale.x);
+		var mapHeight:Int = Std.int(tiledMap.fullHeight * scale.y);
+		
+		// TODO define in editor
+		cl.body.type = BodyType.KINEMATIC;
+		
+		// Center shapes about origin TODO do this in PhysicsTilemap
+		for (shape in cl.body.shapes) {
+			shape.translate(Vec2.get(-tiledMap.fullWidth / 2, -tiledMap.fullWidth / 2));
+		}
+		
+		var matrix:Mat23 = Mat23.scale(scale.x, scale.y);
+		cl.body.transformShapes(matrix);
+		
+		// Move origin of tilemap to center
+		cl.body.position.setxy(mapWidth / 2, mapWidth / 2);
+		return cl;
+	}
+	
 	public function loadTileLayer(tiledLayer:TiledTileLayer, combinedTileset:FlxTilemapGraphicAsset):TileLayer {
-		var tileLayer:TileLayer = new TileLayer();
+		var tileLayer:TileLayer = new TileLayer(this);
 		var tilemap:NapeSpriteTilemap = tileLayer.tilemap;
 		var mapWidth:Int = Std.int(tiledMap.fullWidth * scale.x);
 		var mapHeight:Int = Std.int(tiledMap.fullHeight * scale.y);
@@ -134,7 +196,7 @@ class World extends FlxGroup {
 		
 		tileLayer.scale.copyFrom(scale);
 		tileLayer.origin.set(tiledMap.fullWidth / 2, tiledMap.fullHeight / 2);
-		tileLayer.offset.subtractPoint(tileLayer.origin);//Hack to work around flixel issue
+		tileLayer.offset.subtractPoint(tileLayer.origin);//TODO This is a hack to work around flixel issue
 		
 		// Collidable layers
 		if (tiledLayer.properties.contains("collision")) {
@@ -162,8 +224,12 @@ class World extends FlxGroup {
 		return tileLayer;
 	}
 	
-	public function getObject(name:String):FlxObject {
+	public function getObject(name:String):FlxBasic {
 		return namedObjects.get(name);
+	}
+	
+	public function getLayer(name:String):WorldLayer {
+		return namedLayers.get(name);
 	}
 	
 	private function initCollisions():Void {
@@ -200,11 +266,13 @@ class World extends FlxGroup {
 				var body1IsGround:Bool = collision.body1.cbTypes.has(World.groundCollisionType);
 				groundBody = body1IsGround ? collision.body1 : collision.body2;
 				groundableBody = !body1IsGround ? collision.body1 : collision.body2;
+				
 				var collisionNormal:Float = FlxAngle.asDegrees(collision.normal.angle) - (body1IsGround ? 0 : 180);
 				var groundable:Groundable = cast groundableBody.userData.gameObject;
 				var ground:FlxObject = cast groundBody.userData.gameObject;
-				
-				if (collisionNormal >= Config.minGroundedAngle && collisionNormal <= Config.maxGroundedAngle) {
+				trace(groundableBody.velocity.y);
+				if (collisionNormal >= Config.minGroundedAngle && collisionNormal <= Config.maxGroundedAngle
+				    && groundableBody.velocity.y >= -Config.gravity * FlxG.elapsed) {
 					groundable.ground.add(ground);
 				} else {
 					groundable.ground.remove(ground);
@@ -213,10 +281,46 @@ class World extends FlxGroup {
 		FlxNapeSpace.space.listeners.add(new InteractionListener(CbEvent.END, InteractionType.COLLISION,
 			World.groundCollisionType, World.actorCollisionType,
 			function(cb:InteractionCallback) {
-				var groundable:Groundable = cast cb.int2.userData.gameObject;
-				groundable.ground.remove(cast cb.int1.userData.gameObject);
+				var int1isGround:Bool = cb.int1.castBody.cbTypes.has(World.groundCollisionType);
+				var groundable:Groundable = int1isGround ? cast cb.int2.userData.gameObject :  cast cb.int1.userData.gameObject;
+				var ground:FlxObject = !int1isGround ? cast cb.int2.userData.gameObject :  cast cb.int1.userData.gameObject;
+				groundable.ground.remove(ground);
 			}));
 	}
+	
+	//TODO casting ugliness
+	private function set_x(x:Float):Float {
+		var change:Float = x - this.x;
+		this.x = x;
+		//for (l in members) {
+			//var layer:WorldLayer = cast l;
+			//if (layer.layerType == WorldLayerType.TILE) {
+				//var tl:TileLayer = cast layer;
+				//tl.x += change;
+			//}
+		//}
+		return x;
+	}
+	
+	private function set_y(y:Float):Float {
+		var change:Float = y - this.y;
+		this.y = y;
+		//for (l in members) {
+			//var layer:WorldLayer = cast l;
+			//switch(layer.layerType) {
+				//case WorldLayerType.TILE:
+					//var tl:TileLayer = cast layer;
+					//tl.y += change;
+				//case CollisionLayer:
+					//var cl:CollisionLayer = cast layer;
+					//cl.y += change;
+				//default:
+			//}
+		//}
+		return y;
+	}
+	
+	//TODO angle
 	
 }
 
