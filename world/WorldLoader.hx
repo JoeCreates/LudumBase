@@ -27,8 +27,8 @@ class WorldLoader {
 		typeLoaders.set("submap", function(to:TiledObject, layer:ObjectLayer) {
 			var submap:World = new World(layer.world.scale);
 			submap.load("assets/data/" + to.properties.get("map"), this);
-			submap.x = to.x * layer.world.scale.x;
-			submap.y = to.y * layer.world.scale.y;//TODO possibly dont need this
+			//submap.x = to.x * layer.world.scale.x;
+			//submap.y = to.y * layer.world.scale.y;//TODO possibly dont need this
 			return submap;
 		});
 	}

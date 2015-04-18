@@ -23,11 +23,18 @@ import nape.callbacks.InteractionType;
 import nape.callbacks.PreCallback;
 import nape.callbacks.PreFlag;
 import nape.callbacks.PreListener;
+import nape.constraint.Constraint;
+import nape.constraint.WeldJoint;
 import nape.dynamics.CollisionArbiter;
 import nape.geom.Mat23;
 import nape.geom.Vec2;
 import nape.phys.Body;
 import nape.phys.BodyType;
+import nape.phys.FluidProperties;
+import nape.phys.Material;
+import nape.shape.Circle;
+import nape.shape.Polygon;
+import nape.shape.Shape;
 import openfl.Assets;
 import haxe.io.Path;
 import haxe.xml.Parser;
@@ -52,6 +59,8 @@ import world.WorldLayer.WorldLayerType;
 class World extends FlxGroup {
 	
 	private static inline var TILESET_PATH = "assets/images/";
+	public static inline var DEFAULT_WORLD_MASS = 10000000;
+	public static inline var DEFAULT_WORLD_INERTIA = 10000000;
 	
 	// Collision callback types
 	public static var groundCollisionType:CbType = new CbType();
@@ -72,6 +81,9 @@ class World extends FlxGroup {
 	
 	public var scale:FlxPoint;
 	
+	/** The main body of this world. Attach bodies to this. */
+	public var body:Body;
+	
 	public function new(?scale:FlxPoint) {
 		super();
 		this.scale = (scale == null) ? new FlxPoint(1, 1) : scale;
@@ -80,9 +92,17 @@ class World extends FlxGroup {
 		namedLayers = new Map<String, WorldLayer>();
 	}
 	
-	public function load(tiledLevel:Dynamic, worldLoader:WorldLoader):Void {
+	public function load(tiledLevel:Dynamic, worldLoader:WorldLoader,
+	                     ?bodyType:BodyType, ?pivot:FlxPoint):Void {
 		tiledMap = new TiledMap(tiledLevel);
 		
+		// Create and position body to center of map, or pivot if specified
+		if (bodyType == null) bodyType = BodyType.KINEMATIC;
+		body = new Body(bodyType, pivot != null ?
+			Vec2.get(pivot.x, pivot.y) :
+			Vec2.get(tiledMap.fullWidth * scale.x / 2, tiledMap.fullHeight * scale.y / 2));
+		body.space = FlxNapeSpace.space;
+			
 		// Camera scroll bounds
 		FlxG.camera.setScrollBoundsRect(0, 0, tiledMap.fullWidth, tiledMap.fullHeight, true);
 		FlxG.camera.maxScrollY += FlxG.height / 2;
@@ -169,19 +189,22 @@ class World extends FlxGroup {
 		var mapWidth:Int = Std.int(tiledMap.fullWidth * scale.x);
 		var mapHeight:Int = Std.int(tiledMap.fullHeight * scale.y);
 		
-		// TODO define in editor
-		cl.body.type = BodyType.KINEMATIC;
+		cl.origin.set(tiledMap.fullWidth / 2, tiledMap.fullHeight / 2);
+		cl.scale.copyFrom(scale);
 		
+		cl.body.type = BodyType.DYNAMIC;
+		cl.body.setShapeMaterials(new Material(0, 1, 2));
 		// Center shapes about origin TODO do this in PhysicsTilemap
 		for (shape in cl.body.shapes) {
-			shape.translate(Vec2.get(-tiledMap.fullWidth / 2, -tiledMap.fullWidth / 2));
+			shape.translate(Vec2.get(-tiledMap.fullWidth / 2, -tiledMap.fullHeight / 2));
 		}
-		
 		var matrix:Mat23 = Mat23.scale(scale.x, scale.y);
 		cl.body.transformShapes(matrix);
-		
 		// Move origin of tilemap to center
-		cl.body.position.setxy(mapWidth / 2, mapWidth / 2);
+		cl.body.position.setxy(mapWidth / 2, mapHeight / 2);
+		
+		weld(cl.body);
+		
 		return cl;
 	}
 	
@@ -207,21 +230,29 @@ class World extends FlxGroup {
 			}
 		}
 		
-		// TODO define in editor
-		tilemap.body.type = BodyType.KINEMATIC;
-		
+		tilemap.body.type = BodyType.DYNAMIC;
+		tilemap.body.shapes.push(new Circle(10, null, new Material(0, 0, 0, 0, 0)));
+		tilemap.body.setShapeMaterials(new Material(0, 1, 2));
 		// Center shapes about origin TODO do this in PhysicsTilemap
 		for (shape in tilemap.body.shapes) {
-			shape.translate(Vec2.get(-tiledMap.fullWidth / 2, -tiledMap.fullWidth / 2));
+			shape.translate(Vec2.get(-tiledMap.fullWidth / 2, -tiledMap.fullHeight / 2));
 		}
-		
 		var matrix:Mat23 = Mat23.scale(scale.x, scale.y);
 		tilemap.body.transformShapes(matrix);
-		
 		// Move origin of tilemap to center
-		tilemap.body.position.setxy(mapWidth / 2, mapWidth / 2);
+		tilemap.body.position.setxy(mapWidth / 2, mapHeight / 2);
+		
+		weld(tilemap.body);
 		
 		return tileLayer;
+	}
+	
+	public function weld(weldBody:Body):Void {
+		var j:WeldJoint = new WeldJoint(body, weldBody, Vec2.get(0, 0), Vec2.get(0, 0));
+		j.stiff = true;
+		j.breakUnderError = false;
+		j.breakUnderForce = false;
+		j.space = FlxNapeSpace.space;
 	}
 	
 	public function getObject(name:String):FlxBasic {
@@ -270,7 +301,6 @@ class World extends FlxGroup {
 				var collisionNormal:Float = FlxAngle.asDegrees(collision.normal.angle) - (body1IsGround ? 0 : 180);
 				var groundable:Groundable = cast groundableBody.userData.gameObject;
 				var ground:FlxObject = cast groundBody.userData.gameObject;
-				trace(groundableBody.velocity.y);
 				if (collisionNormal >= Config.minGroundedAngle && collisionNormal <= Config.maxGroundedAngle
 				    && groundableBody.velocity.y >= -Config.gravity * FlxG.elapsed) {
 					groundable.ground.add(ground);
@@ -319,8 +349,6 @@ class World extends FlxGroup {
 		//}
 		return y;
 	}
-	
-	//TODO angle
 	
 }
 
